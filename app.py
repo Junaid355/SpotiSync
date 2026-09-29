@@ -85,6 +85,21 @@ class JsApi:
         threading.Thread(target=worker, daemon=True).start()
         return "started"
 
+    def update_spicetify(self):
+        def worker():
+            try:
+                _manager.update_spicetify()
+                _manager.apply_spicetify()
+            except Exception as e:
+                emit_log(f"Update error: {e}", "error")
+            finally:
+                emit_status()
+                if _window:
+                    _window.evaluate_js("if (window.onActionCompleted) window.onActionCompleted();")
+
+        threading.Thread(target=worker, daemon=True).start()
+        return "started"
+
     def install_marketplace(self):
         def worker():
             try:
@@ -126,11 +141,14 @@ def run_auto_startup_mode():
         mgr.auto_setup_all()
         return
 
-    # 2. Check Spicetify
+    # 2. Check Spicetify CLI installation & patches
     if not SystemDetector.is_spicetify_installed():
         print("Spicetify is missing. Installing...")
         mgr.install_spicetify_cli()
         mgr.install_marketplace()
+        mgr.apply_spicetify()
+    elif not SystemDetector.is_spicetify_applied():
+        print("Spotify was updated or unpatched. Re-applying Spicetify patches...")
         mgr.apply_spicetify()
 
     # 3. Check if Spotify is already running; if not, launch patched Spotify

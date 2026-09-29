@@ -13,6 +13,9 @@ param(
 
 $Host.UI.RawUI.WindowTitle = "SpotiSync - Spotify & Spicetify Auto-Detector"
 
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $ScriptDir) { $ScriptDir = "$env:USERPROFILE\.spotisync" }
+
 function Write-BrandHeader {
     Clear-Host
     Write-Host ""
@@ -34,8 +37,6 @@ function Get-SpotifyPath {
     foreach ($p in $paths) {
         if (Test-Path $p) { return $p }
     }
-    $which = Get-Command "spotify" -ErrorAction SilentlyContinue
-    if ($which) { return $which.Source }
     return $null
 }
 
@@ -47,318 +48,168 @@ function Get-SpicetifyPath {
     foreach ($p in $paths) {
         if (Test-Path $p) { return $p }
     }
-    $which = Get-Command "spicetify" -ErrorAction SilentlyContinue
-    if ($which) { return $which.Source }
     return $null
 }
 
 function Test-MarketplaceInstalled {
-    $spicetifyPath = Get-SpicetifyPath
-    if (-not $spicetifyPath) { return $false }
     $marketDir = "$env:LOCALAPPDATA\spicetify\CustomApps\marketplace"
-    if (Test-Path $marketDir) { return $true }
-    try {
-        $apps = & $spicetifyPath config custom_apps 2>$null
-        if ($apps -match "marketplace") { return $true }
-    } catch {}
+    $marketDir2 = "$env:APPDATA\spicetify\CustomApps\marketplace"
+    if ((Test-Path $marketDir) -or (Test-Path $marketDir2)) { return $true }
     return $false
 }
 
-function Show-Diagnostics {
-    Write-Host " [System Diagnostics]" -ForegroundColor Yellow
-    Write-Host " --------------------------------------------------------" -ForegroundColor DarkGray
-    
-    # 1. Spotify
-    $spotPath = Get-SpotifyPath
-    if ($spotPath) {
-        Write-Host "  Spotify Desktop  : " -NoNewline
-        Write-Host "INSTALLED" -ForegroundColor Green -NoNewline
-        Write-Host " ($spotPath)" -ForegroundColor DarkGray
-    } else {
-        Write-Host "  Spotify Desktop  : " -NoNewline
-        Write-Host "MISSING" -ForegroundColor Red
-    }
-
-    # Process
-    $proc = Get-Process -Name Spotify -ErrorAction SilentlyContinue
-    Write-Host "  Spotify Status   : " -NoNewline
-    if ($proc) {
-        Write-Host "RUNNING ($($proc.Count) processes)" -ForegroundColor Green
-    } else {
-        Write-Host "STOPPED" -ForegroundColor DarkYellow
-    }
-
-    # 2. Spicetify
-    $spicePath = Get-SpicetifyPath
-    if ($spicePath) {
-        $ver = (& $spicePath -v 2>$null)
-        Write-Host "  Spicetify CLI    : " -NoNewline
-        Write-Host "INSTALLED ($ver)" -ForegroundColor Green
-    } else {
-        Write-Host "  Spicetify CLI    : " -NoNewline
-        Write-Host "MISSING" -ForegroundColor Red
-    }
-
-    # 3. Marketplace
-    $market = Test-MarketplaceInstalled
-    Write-Host "  Marketplace Hub  : " -NoNewline
-    if ($market) {
-        Write-Host "READY" -ForegroundColor Green
-    } else {
-        Write-Host "NOT INSTALLED" -ForegroundColor Red
-    }
-
-    # 4. Startup Check
-    $regKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    $startupEntry = (Get-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -ErrorAction SilentlyContinue)
-    Write-Host "  Auto-Check Boot  : " -NoNewline
-    if ($startupEntry) {
-        Write-Host "ENABLED (100% Silent Background & Auto-Close)" -ForegroundColor Green
-    } else {
-        Write-Host "DISABLED" -ForegroundColor DarkGray
-    }
-
-    Write-Host " --------------------------------------------------------" -ForegroundColor DarkGray
-    Write-Host ""
-}
-
-function Update-SpotiSyncFiles {
-    # Silently updates script from GitHub
-    $repoRaw = "https://raw.githubusercontent.com/Junaid355/SpotiSync/main"
-    $scriptDir = $PSScriptRoot
-    if (-not $scriptDir) { $scriptDir = "$env:USERPROFILE\.spotisync" }
-    
-    $files = @("SpotifyAutoManager.ps1", "core.py", "app.py", "BackgroundStartupCheck.vbs")
-    foreach ($f in $files) {
-        try {
-            $dest = "$scriptDir\$f"
-            Invoke-WebRequest -Uri "$repoRaw/$f" -OutFile "$dest.new" -UseBasicParsing -TimeoutSec 5 2>$null
-            if (Test-Path "$dest.new") {
-                Move-Item -Path "$dest.new" -Destination $dest -Force 2>$null
+function Test-SpotifyPatched {
+    # 1. Check index.html inside active xpui folder (Roaming & Local)
+    $indexPaths = @(
+        "$env:APPDATA\Spotify\Apps\xpui\index.html",
+        "$env:LOCALAPPDATA\Spotify\Apps\xpui\index.html"
+    )
+    foreach ($indexPath in $indexPaths) {
+        if (Test-Path $indexPath) {
+            $content = Get-Content -Path $indexPath -Raw -ErrorAction SilentlyContinue
+            if ($content -and $content -match "spicetify") {
+                return $true
             }
-        } catch {}
-    }
-}
-
-function Install-SpotifyClient {
-    $url = "https://download.scdn.co/SpotifySetup.exe"
-    $dest = "$env:TEMP\SpotifySetup.exe"
-    
-    try {
-        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
-        $proc = Start-Process -FilePath $dest -ArgumentList "/silent" -PassThru
-        
-        $maxWait = 60
-        $elapsed = 0
-        while ($elapsed -lt $maxWait) {
-            Start-Sleep -Seconds 2
-            $elapsed += 2
-            $spotPath = Get-SpotifyPath
-            if ($spotPath) { return $true }
         }
-    } catch {}
-    return (Get-SpotifyPath) -ne $null
-}
-
-function Install-SpicetifyCLI {
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        iwr -useb https://raw.githubusercontent.com/spicetify/cli/main/install.ps1 | iex
-        return (Get-SpicetifyPath) -ne $null
-    } catch {
-        return $false
     }
-}
-
-function Install-SpicetifyMarketplace {
-    try {
-        iwr -useb https://raw.githubusercontent.com/spicetify/marketplace/main/resources/install.ps1 | iex
-        $spicePath = Get-SpicetifyPath
-        if ($spicePath) {
-            & $spicePath config custom_apps marketplace 2>$null
+    # 2. Check backup directories
+    $backupPaths = @(
+        "$env:APPDATA\spicetify\Backup",
+        "$env:LOCALAPPDATA\spicetify\Backup"
+    )
+    foreach ($bp in $backupPaths) {
+        if (Test-Path $bp) {
+            $files = Get-ChildItem -Path $bp -ErrorAction SilentlyContinue
+            if ($files -and $files.Count -gt 0) {
+                return $true
+            }
         }
-        return $true
-    } catch {
-        return $false
     }
+    return $false
 }
 
 function Apply-SpicetifyPatches {
     $spicePath = Get-SpicetifyPath
     if (-not $spicePath) { return $false }
 
-    # Stop Spotify before patching
-    Stop-Process -Name Spotify -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-
-    & $spicePath backup apply 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        & $spicePath restore backup apply 2>$null
-    }
-    return $true
-}
-
-function Start-SpotifyPatched {
-    $spotPath = Get-SpotifyPath
-    if ($spotPath) {
-        Start-Process $spotPath
-    }
-}
-
-function Start-AutoFixPipeline {
-    # Step 1: Spotify
-    $spotPath = Get-SpotifyPath
-    if (-not $spotPath) {
-        Install-SpotifyClient
+    $wasRunning = $false
+    $proc = Get-Process -Name Spotify -ErrorAction SilentlyContinue
+    if ($proc) {
+        $wasRunning = $true
+        Stop-Process -Name Spotify -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
     }
 
-    # Step 2: Spicetify CLI
-    $spicePath = Get-SpicetifyPath
-    if (-not $spicePath) {
-        Install-SpicetifyCLI
-    } else {
-        # Check for Spicetify updates
-        & $spicePath upgrade 2>$null
+    # Step 1: Ensure Spicetify CLI is up to date
+    & $spicePath update 2>$null
+
+    # Step 2: Attempt standard apply
+    & $spicePath apply 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-SpotifyPatched)) {
+        # Fallback 1: restore, then backup apply
+        & $spicePath restore 2>$null
+        & $spicePath backup apply 2>$null
     }
 
-    # Step 3: Marketplace
-    if (-not (Test-MarketplaceInstalled)) {
-        Install-SpicetifyMarketplace
+    if ($LASTEXITCODE -ne 0 -or -not (Test-SpotifyPatched)) {
+        # Fallback 2: clear stale backup and create fresh backup apply (for Spotify version updates)
+        & $spicePath clear 2>$null
+        & $spicePath backup apply 2>$null
     }
 
-    # Step 4: Apply & Launch
-    Apply-SpicetifyPatches
-    Start-SpotifyPatched
+    if ($wasRunning) {
+        $spotPath = Get-SpotifyPath
+        if ($spotPath) { Start-Process $spotPath }
+    }
+
+    return (Test-SpotifyPatched)
 }
 
 function Run-SilentStartupCheck {
-    <#
-    100% HEADLESS BACKGROUND EXECUTION (NO UI SHOWN):
-    1. Checks GitHub for self-update silently.
-    2. If Spotify is NOT downloaded: silently downloads and installs everything in the background.
-    3. If Spicetify / Marketplace are missing or Spotify updated: installs and applies patches silently.
-    4. If Spotify is already installed and ready: verifies everything and starts Spotify if not running.
-    5. Auto-closes immediately. Leaves 0 MB of residual RAM in the background.
-    #>
-    Update-SpotiSyncFiles
-
     $spotPath = Get-SpotifyPath
-    $spicePath = Get-SpicetifyPath
+    if (-not $spotPath) { exit 0 }
 
-    if (-not $spotPath) {
-        Install-SpotifyClient
-        Install-SpicetifyCLI
-        Install-SpicetifyMarketplace
+    # If Spotify was unpatched by an update, re-patch immediately
+    if (-not (Test-SpotifyPatched)) {
         Apply-SpicetifyPatches
-        Start-SpotifyPatched
-    } elseif (-not $spicePath -or -not (Test-MarketplaceInstalled)) {
-        Install-SpicetifyCLI
-        Install-SpicetifyMarketplace
-        Apply-SpicetifyPatches
-        Start-SpotifyPatched
-    } else {
-        $proc = Get-Process -Name Spotify -ErrorAction SilentlyContinue
-        if (-not $proc) {
-            Start-SpotifyPatched
-        }
     }
 
-    # Free memory and exit immediately
     [System.GC]::Collect()
     exit 0
 }
 
-function Toggle-Startup {
-    $regKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    $scriptDir = $PSScriptRoot
-    if (-not $scriptDir) { $scriptDir = "$env:USERPROFILE\.spotisync" }
-    $vbsPath = "$scriptDir\BackgroundStartupCheck.vbs"
-    $val = "wscript.exe `"$vbsPath`""
-
-    $exists = (Get-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -ErrorAction SilentlyContinue)
-    if ($exists) {
-        Remove-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -ErrorAction SilentlyContinue
-        Write-Host "Silent Auto-check on Windows Startup disabled." -ForegroundColor Yellow
-    } else {
-        Set-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -Value $val
-        Write-Host "Silent Auto-check on Windows Startup ENABLED." -ForegroundColor Green
-        Write-Host "It will run 100% invisible with NO UI on boot, auto-download if missing, and auto-close (0 RAM)." -ForegroundColor Cyan
-    }
-}
-
-# CLI Parameter handling
 if ($StartupSilent) {
     Run-SilentStartupCheck
     exit 0
 }
 
-if ($Update) {
-    Write-Host "Checking for SpotiSync updates from GitHub..." -ForegroundColor Cyan
-    Update-SpotiSyncFiles
-    Write-Host "Updated!" -ForegroundColor Green
-    exit 0
-}
-
-if ($AutoFix) {
-    Write-Host "Running Auto-Setup..." -ForegroundColor Cyan
-    Start-AutoFixPipeline
-    Write-Host "Done!" -ForegroundColor Green
-    exit 0
-}
-
 if ($CheckOnly) {
     Write-BrandHeader
-    Show-Diagnostics
+    Write-Host " [System Diagnostics]" -ForegroundColor Yellow
+    Write-Host " --------------------------------------------------------" -ForegroundColor DarkGray
+    $spotPath = Get-SpotifyPath
+    Write-Host "  Spotify Desktop  : " -NoNewline
+    if ($spotPath) { Write-Host "INSTALLED ($spotPath)" -ForegroundColor Green } else { Write-Host "MISSING" -ForegroundColor Red }
+
+    $proc = Get-Process -Name Spotify -ErrorAction SilentlyContinue
+    Write-Host "  Spotify Status   : " -NoNewline
+    if ($proc) { Write-Host "RUNNING ($($proc.Count) processes)" -ForegroundColor Green } else { Write-Host "STOPPED" -ForegroundColor DarkYellow }
+
+    $isPatched = Test-SpotifyPatched
+    Write-Host "  Spicetify Patch  : " -NoNewline
+    if ($isPatched) { Write-Host "PATCHED & ACTIVE" -ForegroundColor Green } else { Write-Host "OUTDATED / UNPATCHED" -ForegroundColor Red }
+
+    $market = Test-MarketplaceInstalled
+    Write-Host "  Marketplace Hub  : " -NoNewline
+    if ($market) { Write-Host "READY" -ForegroundColor Green } else { Write-Host "NOT INSTALLED" -ForegroundColor Red }
+
+    $regKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $startupEntry = (Get-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -ErrorAction SilentlyContinue)
+    Write-Host "  Auto-Check Boot  : " -NoNewline
+    if ($startupEntry) { Write-Host "ENABLED (100% Silent Background & Auto-Close)" -ForegroundColor Green } else { Write-Host "DISABLED" -ForegroundColor DarkGray }
+    Write-Host " --------------------------------------------------------" -ForegroundColor DarkGray
     exit 0
 }
 
-if ($Launch) {
-    Start-SpotifyPatched
-    exit 0
-}
-
-if ($Apply) {
-    Apply-SpicetifyPatches
-    exit 0
-}
-
-if ($Marketplace) {
-    Install-SpicetifyMarketplace
-    exit 0
-}
-
-if ($Startup) {
-    Toggle-Startup
-    exit 0
-}
-
-# Interactive Menu
-do {
+if ($AutoFix -or $Apply) {
     Write-BrandHeader
-    Show-Diagnostics
+    Write-Host " [*] Applying Spicetify patch..." -ForegroundColor Cyan
+    Apply-SpicetifyPatches
+    Write-Host " [OK] Complete!" -ForegroundColor Green
+    Start-Sleep -Seconds 2
+    exit 0
+}
 
-    Write-Host "  [1] Complete 1-Click Auto Setup (Download + Spicetify + Patch + Launch)" -ForegroundColor Green
-    Write-Host "  [2] Launch Spotify" -ForegroundColor Cyan
-    Write-Host "  [3] Apply / Re-apply Spicetify Patches" -ForegroundColor White
-    Write-Host "  [4] Install / Update Spicetify Marketplace" -ForegroundColor White
-    Write-Host "  [5] Stop Spotify Processes" -ForegroundColor Yellow
-    Write-Host "  [6] Toggle Silent Auto-Check on Startup (No UI, Auto-closes, 0 RAM)" -ForegroundColor Magenta
-    Write-Host "  [7] Refresh Diagnostics" -ForegroundColor White
-    Write-Host "  [8] Update SpotiSync from GitHub" -ForegroundColor Cyan
-    Write-Host "  [0] Exit" -ForegroundColor DarkGray
-    Write-Host ""
-    $choice = Read-Host " Select an option [0-8]"
-
-    switch ($choice) {
-        "1" { Start-AutoFixPipeline; Read-Host "`nPress Enter to return..." }
-        "2" { Start-SpotifyPatched; Start-Sleep -Seconds 2 }
-        "3" { Apply-SpicetifyPatches; Read-Host "`nPress Enter to return..." }
-        "4" { Install-SpicetifyMarketplace; Read-Host "`nPress Enter to return..." }
-        "5" { Stop-Process -Name Spotify -Force -ErrorAction SilentlyContinue; Write-Host "Spotify stopped." -ForegroundColor Green; Start-Sleep -Seconds 1 }
-        "6" { Toggle-Startup; Start-Sleep -Seconds 2 }
-        "7" { }
-        "8" { Update-SpotiSyncFiles; Write-Host "Updated from GitHub." -ForegroundColor Green; Start-Sleep -Seconds 2 }
-        "0" { exit }
-        default { Write-Host "Invalid option" -ForegroundColor Red; Start-Sleep -Seconds 1 }
+Write-BrandHeader
+$isPatched = Test-SpotifyPatched
+Write-Host " Spotify Status: " -NoNewline
+if ($isPatched) { Write-Host "Active & Patched [OK]" -ForegroundColor Green } else { Write-Host "Needs Patch [!]" -ForegroundColor Red }
+Write-Host ""
+Write-Host " [1] Re-Patch / AutoFix Spotify" -ForegroundColor Cyan
+Write-Host " [2] Toggle Windows Startup Check" -ForegroundColor Yellow
+Write-Host " [3] Launch Spotify" -ForegroundColor Green
+Write-Host " [4] Exit" -ForegroundColor DarkGray
+Write-Host ""
+$choice = Read-Host " Enter choice (1-4)"
+switch ($choice) {
+    "1" { Apply-SpicetifyPatches }
+    "2" {
+        $regKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+        $vbsPath = Join-Path $ScriptDir "BackgroundStartupCheck.vbs"
+        $val = "wscript.exe `"$vbsPath`""
+        $exists = (Get-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -ErrorAction SilentlyContinue)
+        if ($exists) {
+            Remove-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -ErrorAction SilentlyContinue
+            Write-Host "Startup check disabled." -ForegroundColor Yellow
+        } else {
+            Set-ItemProperty -Path $regKey -Name "SpotifyAutoSetupManager" -Value $val
+            Write-Host "Startup check enabled!" -ForegroundColor Green
+        }
+        Start-Sleep -Seconds 2
     }
-} while ($choice -ne "0")
+    "3" {
+        $spotPath = Get-SpotifyPath
+        if ($spotPath) { Start-Process $spotPath }
+    }
+    default { exit 0 }
+}

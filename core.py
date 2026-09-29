@@ -125,10 +125,27 @@ class SystemDetector:
     @staticmethod
     def is_spicetify_applied() -> bool:
         """Checks if Spicetify has backed up and applied modifications."""
-        backup_dir = os.path.join(LOCALAPPDATA, "spicetify", "Backup")
-        if os.path.exists(backup_dir) and os.path.isdir(backup_dir):
-            files = os.listdir(backup_dir)
-            return len(files) > 0
+        # 1. Check active xpui index.html
+        for spot_root in [os.path.join(APPDATA, "Spotify"), os.path.join(LOCALAPPDATA, "Spotify")]:
+            index_path = os.path.join(spot_root, "Apps", "xpui", "index.html")
+            if os.path.exists(index_path):
+                try:
+                    with open(index_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read(2048)
+                        if "spicetify" in content.lower():
+                            return True
+                except Exception:
+                    pass
+
+        # 2. Check backup directories (Roaming and Local)
+        for backup_dir in [os.path.join(APPDATA, "spicetify", "Backup"), os.path.join(LOCALAPPDATA, "spicetify", "Backup")]:
+            if os.path.exists(backup_dir) and os.path.isdir(backup_dir):
+                try:
+                    files = os.listdir(backup_dir)
+                    if len(files) > 0:
+                        return True
+                except Exception:
+                    pass
         return False
 
     @staticmethod
@@ -287,8 +304,18 @@ class SpotifyManager:
         self._log("Spicetify Marketplace setup finished.", "success")
         return success
 
+    def update_spicetify(self) -> bool:
+        """Updates Spicetify CLI to the latest release."""
+        spicetify_path = SystemDetector.get_spicetify_path()
+        if not spicetify_path:
+            self._log("Spicetify not found to update.", "warning")
+            return False
+        self._log("Checking and upgrading Spicetify CLI...", "info")
+        cmd = f"& '{spicetify_path}' update"
+        return self.run_powershell_cmd(cmd)
+
     def apply_spicetify(self, force_backup: bool = True) -> bool:
-        """Applies Spicetify modifications/patches."""
+        """Applies Spicetify modifications/patches with auto-update and multi-tier recovery."""
         spicetify_path = SystemDetector.get_spicetify_path()
         if not spicetify_path:
             self._log("Spicetify executable not found! Cannot apply patch.", "error")
@@ -296,18 +323,32 @@ class SpotifyManager:
 
         self.kill_spotify()
 
+        # Step 1: Ensure Spicetify is up to date
+        self.run_powershell_cmd(f"& '{spicetify_path}' update")
+
+        # Step 2: Try standard apply or backup apply
         cmd = f"& '{spicetify_path}' backup apply" if force_backup else f"& '{spicetify_path}' apply"
         self._log(f"Applying Spicetify patches ({'backup apply' if force_backup else 'apply'})...", "info")
-        
         success = self.run_powershell_cmd(cmd)
-        if not success:
-            self._log("Attempting 'spicetify restore backup apply' fallback...", "warning")
+
+        # Step 3: Fallback 1 - restore, then backup apply
+        if not success or not SystemDetector.is_spicetify_applied():
+            self._log("Attempting 'spicetify restore backup apply' recovery...", "warning")
             fallback_cmd = f"& '{spicetify_path}' restore backup apply"
             success = self.run_powershell_cmd(fallback_cmd)
 
-        if success:
+        # Step 4: Fallback 2 - clear stale backup and create fresh backup apply
+        if not success or not SystemDetector.is_spicetify_applied():
+            self._log("Attempting 'spicetify clear backup apply' for updated Spotify...", "warning")
+            clear_cmd = f"& '{spicetify_path}' clear; & '{spicetify_path}' backup apply"
+            success = self.run_powershell_cmd(clear_cmd)
+
+        if success or SystemDetector.is_spicetify_applied():
             self._log("Spicetify applied successfully! Spotify is now customized.", "success")
-        return success
+            return True
+        else:
+            self._log("Failed to apply Spicetify patches.", "error")
+            return False
 
     def launch_spotify(self) -> bool:
         """Launches Spotify application."""

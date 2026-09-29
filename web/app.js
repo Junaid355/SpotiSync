@@ -25,6 +25,7 @@ const btnAutoSetup = document.getElementById('btn-auto-setup');
 const btnLaunchSpotify = document.getElementById('btn-launch-spotify');
 const btnApplySpicetify = document.getElementById('btn-apply-spicetify');
 const btnInstallMarketplace = document.getElementById('btn-install-marketplace');
+const btnUpdateSpicetify = document.getElementById('btn-update-spicetify');
 const btnKillSpotify = document.getElementById('btn-kill-spotify');
 
 const logTerminal = document.getElementById('log-terminal');
@@ -207,6 +208,15 @@ btnInstallMarketplace.addEventListener('click', async () => {
     await callApi('install_marketplace');
 });
 
+if (btnUpdateSpicetify) {
+    btnUpdateSpicetify.addEventListener('click', async () => {
+        if (isBusy) return;
+        setBusyState(true);
+        appendLog('Checking and updating Spicetify CLI...', 'info');
+        await callApi('update_spicetify');
+    });
+}
+
 btnKillSpotify.addEventListener('click', async () => {
     if (isBusy) return;
     appendLog('Stopping Spotify processes...', 'info');
@@ -231,5 +241,10 @@ window.addEventListener('pywebviewready', () => {
     refreshStatus();
 });
 
-// Initial auto-refresh
+// Initial auto-refresh & periodic polling
 setTimeout(refreshStatus, 300);
+setInterval(() => {
+    if (!isBusy) {
+        refreshStatus();
+    }
+}, 8000);

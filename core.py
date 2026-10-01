@@ -123,29 +123,44 @@ class SystemDetector:
         return False
 
     @staticmethod
+    def is_spotify_updates_blocked() -> bool:
+        """Checks if Spotify update paths are blocked with dummy files."""
+        for p in [os.path.join(LOCALAPPDATA, "Spotify", "Update"), os.path.join(APPDATA, "Spotify", "Update")]:
+            if os.path.exists(p) and os.path.isfile(p):
+                return True
+        return False
+
+    @staticmethod
     def is_spicetify_applied() -> bool:
         """Checks if Spicetify has backed up and applied modifications."""
-        # 1. Check active xpui index.html
+        found_xpui = False
         for spot_root in [os.path.join(APPDATA, "Spotify"), os.path.join(LOCALAPPDATA, "Spotify")]:
             index_path = os.path.join(spot_root, "Apps", "xpui", "index.html")
             if os.path.exists(index_path):
+                found_xpui = True
                 try:
                     with open(index_path, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read(2048)
+                        content = f.read()
                         if "spicetify" in content.lower():
                             return True
                 except Exception:
                     pass
 
-        # 2. Check backup directories (Roaming and Local)
-        for backup_dir in [os.path.join(APPDATA, "spicetify", "Backup"), os.path.join(LOCALAPPDATA, "spicetify", "Backup")]:
-            if os.path.exists(backup_dir) and os.path.isdir(backup_dir):
-                try:
-                    files = os.listdir(backup_dir)
-                    if len(files) > 0:
-                        return True
-                except Exception:
-                    pass
+        # If modern xpui folder exists but index lacks spicetify, it is definitely unpatched
+        if found_xpui:
+            return False
+
+        # Legacy xpui.spa check
+        for spot_root in [os.path.join(APPDATA, "Spotify"), os.path.join(LOCALAPPDATA, "Spotify")]:
+            spa_path = os.path.join(spot_root, "xpui.spa")
+            if os.path.exists(spa_path):
+                for backup_dir in [os.path.join(APPDATA, "spicetify", "Backup"), os.path.join(LOCALAPPDATA, "spicetify", "Backup")]:
+                    if os.path.exists(backup_dir) and os.path.isdir(backup_dir):
+                        try:
+                            if len(os.listdir(backup_dir)) > 0:
+                                return True
+                        except Exception:
+                            pass
         return False
 
     @staticmethod
@@ -169,6 +184,7 @@ class SystemDetector:
                 "path": spotify_path,
                 "running": cls.is_spotify_running(),
                 "is_ms_store": cls.is_ms_store_spotify_installed(),
+                "updates_blocked": cls.is_spotify_updates_blocked(),
             },
             "spicetify": {
                 "installed": spicetify_path is not None,
@@ -345,10 +361,64 @@ class SpotifyManager:
 
         if success or SystemDetector.is_spicetify_applied():
             self._log("Spicetify applied successfully! Spotify is now customized.", "success")
+            self.block_spotify_updates()
             return True
         else:
             self._log("Failed to apply Spicetify patches.", "error")
             return False
+
+    def block_spotify_updates(self) -> bool:
+        """Blocks Spotify from automatically downloading updates by locking Update directory paths."""
+        self._log("Configuring Spotify auto-update blocker...", "info")
+        paths = [
+            os.path.join(LOCALAPPDATA, "Spotify", "Update"),
+            os.path.join(APPDATA, "Spotify", "Update"),
+        ]
+        user = os.environ.get("USERNAME", "Everyone")
+        import stat
+        success = True
+        for p in paths:
+            try:
+                parent = os.path.dirname(p)
+                if not os.path.exists(parent):
+                    os.makedirs(parent, exist_ok=True)
+                if os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                if not os.path.exists(p):
+                    with open(p, "w", encoding="utf-8") as f:
+                        f.write("Spotify auto-updates blocked by SpotiSync")
+                os.chmod(p, stat.S_IREAD)
+                subprocess.run(["icacls", p, "/deny", f"{user}:(W,D)"], capture_output=True)
+            except Exception as e:
+                self._log(f"Failed to lock {p}: {e}", "warning")
+                success = False
+
+        if success:
+            self._log("Spotify auto-updater blocked (preventing Spotify from wiping Spicetify).", "success")
+        return success
+
+    def unblock_spotify_updates(self) -> bool:
+        """Unblocks Spotify updates."""
+        self._log("Removing Spotify auto-update blocker...", "info")
+        paths = [
+            os.path.join(LOCALAPPDATA, "Spotify", "Update"),
+            os.path.join(APPDATA, "Spotify", "Update"),
+        ]
+        user = os.environ.get("USERNAME", "Everyone")
+        import stat
+        for p in paths:
+            try:
+                if os.path.exists(p):
+                    subprocess.run(["icacls", p, "/remove:d", user], capture_output=True)
+                    os.chmod(p, stat.S_IWRITE)
+                    if os.path.isdir(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                    else:
+                        os.remove(p)
+            except Exception as e:
+                self._log(f"Failed to unlock {p}: {e}", "warning")
+        self._log("Spotify auto-updater unblocked.", "info")
+        return True
 
     def launch_spotify(self) -> bool:
         """Launches Spotify application."""

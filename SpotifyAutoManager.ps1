@@ -64,15 +64,21 @@ function Test-SpotifyPatched {
         "$env:APPDATA\Spotify\Apps\xpui\index.html",
         "$env:LOCALAPPDATA\Spotify\Apps\xpui\index.html"
     )
+    $foundXpui = $false
     foreach ($indexPath in $indexPaths) {
         if (Test-Path $indexPath) {
+            $foundXpui = $true
             $content = Get-Content -Path $indexPath -Raw -ErrorAction SilentlyContinue
-            if ($content -and $content -match "spicetify") {
+            if ($content -and $content.ToLower().Contains("spicetify")) {
                 return $true
             }
         }
     }
-    # 2. Check backup directories
+    if ($foundXpui) {
+        return $false
+    }
+
+    # 2. Check backup directories (legacy fallback only if xpui folder missing)
     $backupPaths = @(
         "$env:APPDATA\spicetify\Backup",
         "$env:LOCALAPPDATA\spicetify\Backup"
@@ -83,6 +89,66 @@ function Test-SpotifyPatched {
             if ($files -and $files.Count -gt 0) {
                 return $true
             }
+        }
+    }
+    return $false
+}
+
+function Block-SpotifyUpdates {
+    $updatePaths = @(
+        "$env:LOCALAPPDATA\Spotify\Update",
+        "$env:APPDATA\Spotify\Update"
+    )
+    $username = $env:USERNAME
+    if (-not $username) { $username = "Everyone" }
+
+    foreach ($p in $updatePaths) {
+        try {
+            $parent = Split-Path -Parent $p
+            if (-not (Test-Path $parent)) {
+                New-Item -ItemType Directory -Path $parent -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+            if (Test-Path $p) {
+                if ((Get-Item $p) -is [System.IO.DirectoryInfo]) {
+                    Remove-Item -Path $p -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+            if (-not (Test-Path $p)) {
+                New-Item -ItemType File -Path $p -Value "Spotify auto-updates blocked by SpotiSync" -Force -ErrorAction SilentlyContinue | Out-Null
+            }
+            Set-ItemProperty -Path $p -Name Attributes -Value ([System.IO.FileAttributes]::ReadOnly) -ErrorAction SilentlyContinue
+            icacls "$p" /deny "${username}:(W,D)" 2>$null | Out-Null
+        } catch {}
+    }
+}
+
+function Unblock-SpotifyUpdates {
+    $updatePaths = @(
+        "$env:LOCALAPPDATA\Spotify\Update",
+        "$env:APPDATA\Spotify\Update"
+    )
+    $username = $env:USERNAME
+    if (-not $username) { $username = "Everyone" }
+
+    foreach ($p in $updatePaths) {
+        try {
+            if (Test-Path $p) {
+                icacls "$p" /remove:d "$username" 2>$null | Out-Null
+                Set-ItemProperty -Path $p -Name Attributes -Value ([System.IO.FileAttributes]::Normal) -ErrorAction SilentlyContinue
+                Remove-Item -Path $p -Force -Recurse -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+}
+
+function Test-SpotifyUpdatesBlocked {
+    $updatePaths = @(
+        "$env:LOCALAPPDATA\Spotify\Update",
+        "$env:APPDATA\Spotify\Update"
+    )
+    foreach ($p in $updatePaths) {
+        if (Test-Path $p -PathType Leaf) {
+            return $true
         }
     }
     return $false
@@ -117,6 +183,9 @@ function Apply-SpicetifyPatches {
         & $spicePath backup apply 2>$null
     }
 
+    # Always ensure Spotify auto-updates are locked after applying
+    Block-SpotifyUpdates
+
     if ($wasRunning) {
         $spotPath = Get-SpotifyPath
         if ($spotPath) { Start-Process $spotPath }
@@ -128,6 +197,9 @@ function Apply-SpicetifyPatches {
 function Run-SilentStartupCheck {
     $spotPath = Get-SpotifyPath
     if (-not $spotPath) { exit 0 }
+
+    # Always ensure Spotify auto-updates remain blocked
+    Block-SpotifyUpdates
 
     # If Spotify was unpatched by an update, re-patch immediately
     if (-not (Test-SpotifyPatched)) {
@@ -159,6 +231,10 @@ if ($CheckOnly) {
     Write-Host "  Spicetify Patch  : " -NoNewline
     if ($isPatched) { Write-Host "PATCHED & ACTIVE" -ForegroundColor Green } else { Write-Host "OUTDATED / UNPATCHED" -ForegroundColor Red }
 
+    $isBlocked = Test-SpotifyUpdatesBlocked
+    Write-Host "  Spotify Updater  : " -NoNewline
+    if ($isBlocked) { Write-Host "BLOCKED (Safe - won't wipe Spicetify)" -ForegroundColor Green } else { Write-Host "ALLOWED (Risk of overwriting)" -ForegroundColor Yellow }
+
     $market = Test-MarketplaceInstalled
     Write-Host "  Marketplace Hub  : " -NoNewline
     if ($market) { Write-Host "READY" -ForegroundColor Green } else { Write-Host "NOT INSTALLED" -ForegroundColor Red }
@@ -173,7 +249,7 @@ if ($CheckOnly) {
 
 if ($AutoFix -or $Apply) {
     Write-BrandHeader
-    Write-Host " [*] Applying Spicetify patch..." -ForegroundColor Cyan
+    Write-Host " [*] Applying Spicetify patch & blocking updater..." -ForegroundColor Cyan
     Apply-SpicetifyPatches
     Write-Host " [OK] Complete!" -ForegroundColor Green
     Start-Sleep -Seconds 2
@@ -186,14 +262,25 @@ Write-Host " Spotify Status: " -NoNewline
 if ($isPatched) { Write-Host "Active & Patched [OK]" -ForegroundColor Green } else { Write-Host "Needs Patch [!]" -ForegroundColor Red }
 Write-Host ""
 Write-Host " [1] Re-Patch / AutoFix Spotify" -ForegroundColor Cyan
-Write-Host " [2] Toggle Windows Startup Check" -ForegroundColor Yellow
-Write-Host " [3] Launch Spotify" -ForegroundColor Green
-Write-Host " [4] Exit" -ForegroundColor DarkGray
+Write-Host " [2] Toggle Block Spotify Auto-Updates" -ForegroundColor Magenta
+Write-Host " [3] Toggle Windows Startup Check" -ForegroundColor Yellow
+Write-Host " [4] Launch Spotify" -ForegroundColor Green
+Write-Host " [5] Exit" -ForegroundColor DarkGray
 Write-Host ""
-$choice = Read-Host " Enter choice (1-4)"
+$choice = Read-Host " Enter choice (1-5)"
 switch ($choice) {
     "1" { Apply-SpicetifyPatches }
     "2" {
+        if (Test-SpotifyUpdatesBlocked) {
+            Unblock-SpotifyUpdates
+            Write-Host "Spotify auto-updates unblocked." -ForegroundColor Yellow
+        } else {
+            Block-SpotifyUpdates
+            Write-Host "Spotify auto-updates permanently blocked!" -ForegroundColor Green
+        }
+        Start-Sleep -Seconds 2
+    }
+    "3" {
         $regKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
         $vbsPath = Join-Path $ScriptDir "BackgroundStartupCheck.vbs"
         $val = "wscript.exe `"$vbsPath`""
@@ -207,7 +294,7 @@ switch ($choice) {
         }
         Start-Sleep -Seconds 2
     }
-    "3" {
+    "4" {
         $spotPath = Get-SpotifyPath
         if ($spotPath) { Start-Process $spotPath }
     }

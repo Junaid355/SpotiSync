@@ -14,6 +14,7 @@ const spotifyPathText = document.getElementById('spotify-path-text');
 const spotifyStatusPill = document.getElementById('spotify-status-pill');
 const spotifyRunningText = document.getElementById('spotify-running-text');
 const spotifyEditionText = document.getElementById('spotify-edition-text');
+const spotifyUpdatesText = document.getElementById('spotify-updates-text');
 
 const spicetifyVersionText = document.getElementById('spicetify-version-text');
 const spicetifyStatusPill = document.getElementById('spicetify-status-pill');
@@ -21,6 +22,7 @@ const marketplaceStatusText = document.getElementById('marketplace-status-text')
 const patchStatusText = document.getElementById('patch-status-text');
 
 const startupToggle = document.getElementById('startup-toggle');
+const blockUpdatesToggle = document.getElementById('block-updates-toggle');
 const btnAutoSetup = document.getElementById('btn-auto-setup');
 const btnLaunchSpotify = document.getElementById('btn-launch-spotify');
 const btnApplySpicetify = document.getElementById('btn-apply-spicetify');
@@ -72,12 +74,22 @@ function renderStatus(status) {
         spotifyStatusPill.textContent = 'Installed';
         spotifyRunningText.textContent = spotify.running ? '🟢 Active & Running' : '⚪ Stopped';
         spotifyEditionText.textContent = spotify.is_ms_store ? '⚠️ Microsoft Store (Unsupported)' : 'Win32 Standalone (Supported)';
+        if (spotifyUpdatesText) {
+            if (spotify.updates_blocked) {
+                spotifyUpdatesText.textContent = '🛡️ Blocked (Safe)';
+                spotifyUpdatesText.style.color = '#1ed760';
+            } else {
+                spotifyUpdatesText.textContent = '⚠️ Allowed (May wipe Spicetify)';
+                spotifyUpdatesText.style.color = '#f1c40f';
+            }
+        }
     } else {
         spotifyPathText.textContent = 'Not Installed';
         spotifyStatusPill.className = 'pill pill-missing';
         spotifyStatusPill.textContent = 'Missing';
         spotifyRunningText.textContent = 'No';
         spotifyEditionText.textContent = '-';
+        if (spotifyUpdatesText) spotifyUpdatesText.textContent = '-';
     }
 
     // Spicetify Card
@@ -106,8 +118,11 @@ function renderStatus(status) {
         badgeText.textContent = 'Patch Pending';
     }
 
-    // Startup Toggle
+    // Settings Toggles
     startupToggle.checked = !!system.startup_enabled;
+    if (blockUpdatesToggle) {
+        blockUpdatesToggle.checked = !!spotify.updates_blocked;
+    }
 
     footerTime.textContent = `Last Checked: ${new Date().toLocaleTimeString()}`;
 }
@@ -228,6 +243,14 @@ startupToggle.addEventListener('change', async (e) => {
     appendLog(`Setting Windows Startup Auto-Check to ${isChecked ? 'Enabled' : 'Disabled'}...`, 'info');
     await callApi('set_startup_enabled', isChecked);
 });
+
+if (blockUpdatesToggle) {
+    blockUpdatesToggle.addEventListener('change', async (e) => {
+        const isChecked = e.target.checked;
+        appendLog(`Setting Spotify Auto-Update Blocker to ${isChecked ? 'Enabled' : 'Disabled'}...`, 'info');
+        await callApi('toggle_block_updates', isChecked);
+    });
+}
 
 btnRefresh.addEventListener('click', refreshStatus);
 

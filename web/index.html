@@ -60,6 +60,10 @@
                             <span class="label">Edition:</span>
                             <span class="value" id="spotify-edition-text">Win32 Standalone</span>
                         </div>
+                        <div class="detail-row">
+                            <span class="label">Auto-Updates:</span>
+                            <span class="value" id="spotify-updates-text">Checking...</span>
+                        </div>
                     </div>
                 </div>
 
@@ -158,6 +162,16 @@
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="startup-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-info">
+                        <strong>Block Spotify Auto-Updater (Recommended)</strong>
+                        <span>Prevents Spotify from downloading background updates that wipe Spicetify</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="block-updates-toggle">
                         <span class="slider"></span>
                     </label>
                 </div>

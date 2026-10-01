@@ -129,6 +129,14 @@ class JsApi:
         emit_status()
         return res
 
+    def toggle_block_updates(self, enabled: bool):
+        if enabled:
+            res = _manager.block_spotify_updates()
+        else:
+            res = _manager.unblock_spotify_updates()
+        emit_status()
+        return res
+
 
 def run_auto_startup_mode():
     """Silent background check executed when PC boots or triggered via --auto."""
@@ -151,7 +159,10 @@ def run_auto_startup_mode():
         print("Spotify was updated or unpatched. Re-applying Spicetify patches...")
         mgr.apply_spicetify()
 
-    # 3. Check if Spotify is already running; if not, launch patched Spotify
+    # 3. Always ensure Spotify auto-updates are blocked
+    mgr.block_spotify_updates()
+
+    # 4. Check if Spotify is already running; if not, launch patched Spotify
     if not SystemDetector.is_spotify_running():
         print("Launching Patched Spotify...")
         mgr.launch_spotify()

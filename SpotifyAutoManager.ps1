@@ -166,7 +166,19 @@ function Apply-SpicetifyPatches {
         Start-Sleep -Seconds 1
     }
 
-    # Step 1: Ensure Spicetify CLI is up to date
+    # Ensure theme is not set to broken 'marketplace'
+    try {
+        $currTheme = & $spicePath config current_theme 2>$null
+        if ($currTheme -match "marketplace" -or -not $currTheme) {
+            & $spicePath config current_theme SpicetifyDefault 2>$null
+        }
+        $currApps = & $spicePath config custom_apps 2>$null
+        if ($currApps -notmatch "marketplace") {
+            & $spicePath config custom_apps marketplace 2>$null
+        }
+    } catch {}
+
+    # Step 1: Ensure Spicetify CLI is up to date (non-blocking if rate limited)
     & $spicePath update 2>$null
 
     # Step 2: Attempt standard apply
@@ -188,7 +200,10 @@ function Apply-SpicetifyPatches {
 
     if ($wasRunning) {
         $spotPath = Get-SpotifyPath
-        if ($spotPath) { Start-Process $spotPath }
+        if ($spotPath) {
+            $app = New-Object -ComObject Shell.Application
+            $app.ShellExecute($spotPath, '', '', 'open', 1)
+        }
     }
 
     return (Test-SpotifyPatched)
@@ -207,6 +222,40 @@ function Run-SilentStartupCheck {
     }
 
     [System.GC]::Collect()
+    exit 0
+}
+
+if ($Update) {
+    Write-BrandHeader
+    Write-Host " [*] Checking for SpotiSync updates from GitHub..." -ForegroundColor Cyan
+    $files = @(
+        "SpotifyAutoManager.ps1",
+        "BackgroundStartupCheck.vbs",
+        "Enable-Startup-AutoCheck.bat",
+        "Disable-Startup-AutoCheck.bat",
+        "Start-SpotifyManager.bat",
+        "Run-Silent-Test.bat",
+        "core.py",
+        "app.py",
+        "README.md",
+        "version.json",
+        "web/index.html",
+        "web/style.css",
+        "web/app.js"
+    )
+    $rawBase = "https://raw.githubusercontent.com/Junaid355/SpotiSync/main"
+    foreach ($f in $files) {
+        $dest = Join-Path $ScriptDir $f
+        $url = "$rawBase/$f"
+        $parent = Split-Path -Parent $dest
+        if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+        try {
+            curl.exe -s -L -o "$dest" "$url"
+            Write-Host "  [+] Synced $f" -ForegroundColor DarkGray
+        } catch {}
+    }
+    Write-Host " [OK] SpotiSync updated to latest version from GitHub!" -ForegroundColor Green
+    Start-Sleep -Seconds 2
     exit 0
 }
 
@@ -265,9 +314,10 @@ Write-Host " [1] Re-Patch / AutoFix Spotify" -ForegroundColor Cyan
 Write-Host " [2] Toggle Block Spotify Auto-Updates" -ForegroundColor Magenta
 Write-Host " [3] Toggle Windows Startup Check" -ForegroundColor Yellow
 Write-Host " [4] Launch Spotify" -ForegroundColor Green
-Write-Host " [5] Exit" -ForegroundColor DarkGray
+Write-Host " [5] Update SpotiSync from GitHub" -ForegroundColor White
+Write-Host " [6] Exit" -ForegroundColor DarkGray
 Write-Host ""
-$choice = Read-Host " Enter choice (1-5)"
+$choice = Read-Host " Enter choice (1-6)"
 switch ($choice) {
     "1" { Apply-SpicetifyPatches }
     "2" {
@@ -296,7 +346,13 @@ switch ($choice) {
     }
     "4" {
         $spotPath = Get-SpotifyPath
-        if ($spotPath) { Start-Process $spotPath }
+        if ($spotPath) {
+            $app = New-Object -ComObject Shell.Application
+            $app.ShellExecute($spotPath, '', '', 'open', 1)
+        }
+    }
+    "5" {
+        & "$PSCommandPath" -Update
     }
     default { exit 0 }
 }

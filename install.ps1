@@ -33,6 +33,7 @@ $files = @(
     "core.py",
     "app.py",
     "README.md",
+    "version.json",
     "web/index.html",
     "web/style.css",
     "web/app.js"

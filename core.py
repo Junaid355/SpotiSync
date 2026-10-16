@@ -1,6 +1,6 @@
 """
 Spotify & Spicetify Auto-Detector & Setup Suite - Core Engine
-Handles system diagnostics, downloads, PowerShell automation, and registry management.
+Handles system diagnostics, downloads, PowerShell automation, auto-updates, and registry management.
 """
 
 import os
@@ -9,14 +9,16 @@ import json
 import time
 import shutil
 import urllib.request
+import urllib.error
 import subprocess
 import winreg
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, Callable, Optional, List
 
 # Standard Paths
 APPDATA = os.environ.get("APPDATA", "")
 LOCALAPPDATA = os.environ.get("LOCALAPPDATA", "")
 USERPROFILE = os.environ.get("USERPROFILE", "")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SPOTIFY_EXE_PATHS = [
     os.path.join(APPDATA, "Spotify", "Spotify.exe"),
@@ -37,16 +39,157 @@ MARKETPLACE_INSTALL_CMD = "iwr -useb https://raw.githubusercontent.com/spicetify
 REG_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 REG_APP_NAME = "SpotifyAutoSetupManager"
 
+GITHUB_REPO = "Junaid355/SpotiSync"
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/Junaid355/SpotiSync/main"
+VERSION_FILE = os.path.join(SCRIPT_DIR, "version.json")
+
+
+class AutoUpdater:
+    """Handles automated GitHub repository sync and self-updates for SpotiSync."""
+
+    FILES_TO_SYNC = [
+        "core.py",
+        "app.py",
+        "SpotifyAutoManager.ps1",
+        "Start-SpotifyManager.bat",
+        "BackgroundStartupCheck.vbs",
+        "Enable-Startup-AutoCheck.bat",
+        "Disable-Startup-AutoCheck.bat",
+        "Run-Silent-Test.bat",
+        "README.md",
+        "version.json",
+        "web/index.html",
+        "web/style.css",
+        "web/app.js",
+    ]
+
+    @staticmethod
+    def get_local_version() -> Dict[str, Any]:
+        if os.path.exists(VERSION_FILE):
+            try:
+                with open(VERSION_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {
+            "version": "1.1.0",
+            "commit": "unknown",
+            "name": "SpotiSync Suite",
+            "repo": f"https://github.com/{GITHUB_REPO}"
+        }
+
+    @classmethod
+    def check_for_updates(cls, token: Optional[str] = None) -> Dict[str, Any]:
+        """Checks GitHub API for the latest commit on main branch."""
+        local_info = cls.get_local_version()
+        local_commit = local_info.get("commit", "")
+
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/commits/main"
+        headers = {
+            "User-Agent": "SpotiSync-AutoUpdater",
+            "Accept": "application/vnd.github+json"
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                remote_sha = data.get("sha", "")
+                commit_info = data.get("commit", {})
+                message = commit_info.get("message", "").split("\n")[0]
+                date = commit_info.get("author", {}).get("date", "")
+
+                has_update = bool(remote_sha and local_commit and remote_sha != local_commit and local_commit != "unknown")
+
+                return {
+                    "available": has_update,
+                    "local_version": local_info.get("version", "1.1.0"),
+                    "local_commit": local_commit[:7] if local_commit else "current",
+                    "latest_commit": remote_sha[:7] if remote_sha else "latest",
+                    "latest_sha": remote_sha,
+                    "message": message,
+                    "date": date,
+                    "repo": f"https://github.com/{GITHUB_REPO}",
+                    "checked_at": time.time(),
+                }
+        except Exception as e:
+            return {
+                "available": False,
+                "local_version": local_info.get("version", "1.1.0"),
+                "local_commit": local_commit[:7] if local_commit else "current",
+                "latest_commit": "unknown",
+                "error": str(e),
+                "checked_at": time.time(),
+            }
+
+    @classmethod
+    def download_and_apply_update(cls, log_callback: Optional[Callable[[str, str], None]] = None) -> bool:
+        """Downloads updated files from raw GitHub into the current installation directory."""
+        def _log(msg, lvl="info"):
+            if log_callback:
+                log_callback(msg, lvl)
+            else:
+                print(f"[{lvl.upper()}] {msg}")
+
+        _log(f"Starting auto-update from https://github.com/{GITHUB_REPO}...", "info")
+        check_res = cls.check_for_updates()
+        new_sha = check_res.get("latest_sha", "")
+
+        success_count = 0
+        for rel_path in cls.FILES_TO_SYNC:
+            remote_url = f"{GITHUB_RAW_URL}/{rel_path}"
+            local_target = os.path.join(SCRIPT_DIR, rel_path)
+            parent_dir = os.path.dirname(local_target)
+            if not os.path.exists(parent_dir):
+                os.makedirs(parent_dir, exist_ok=True)
+
+            try:
+                req = urllib.request.Request(remote_url, headers={"User-Agent": "SpotiSync-Updater"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    content = resp.read()
+                    with open(local_target, "wb") as f:
+                        f.write(content)
+                success_count += 1
+                _log(f"Updated: {rel_path}", "info")
+            except Exception as e:
+                _log(f"Notice: Failed to fetch {rel_path} ({e})", "warning")
+
+        # Save updated version.json
+        if new_sha:
+            try:
+                version_data = {
+                    "version": "1.1.0",
+                    "commit": new_sha,
+                    "name": "SpotiSync Suite",
+                    "repo": f"https://github.com/{GITHUB_REPO}",
+                    "last_updated": time.strftime("%Y-%m-%d %H:%M:%S")
+                }
+                with open(VERSION_FILE, "w", encoding="utf-8") as f:
+                    json.dump(version_data, f, indent=2)
+            except Exception:
+                pass
+
+        if success_count > 0:
+            _log(f"SpotiSync updated successfully ({success_count} files refreshed)!", "success")
+            return True
+        else:
+            _log("Auto-update failed to download files.", "error")
+            return False
+
 
 class SystemDetector:
     """Performs real-time diagnostics on Spotify and Spicetify installations."""
+
+    _cached_update_info = None
+    _last_update_check = 0
 
     @staticmethod
     def get_spotify_path() -> Optional[str]:
         for path in SPOTIFY_EXE_PATHS:
             if os.path.exists(path):
                 return path
-        # Check in PATH
         which_path = shutil.which("spotify")
         if which_path and os.path.exists(which_path):
             return which_path
@@ -107,6 +250,11 @@ class SystemDetector:
         spicetify_path = SystemDetector.get_spicetify_path()
         if not spicetify_path:
             return False
+        # Check file directory
+        for base in [APPDATA, LOCALAPPDATA]:
+            market_dir = os.path.join(base, "spicetify", "CustomApps", "marketplace")
+            if os.path.exists(market_dir) and os.path.isdir(market_dir):
+                return True
         # Check config custom_apps
         try:
             result = subprocess.run([spicetify_path, "config", "custom_apps"], capture_output=True, text=True, timeout=5)
@@ -114,12 +262,6 @@ class SystemDetector:
                 return True
         except Exception:
             pass
-
-        # Also check file directory
-        custom_apps_dir = os.path.join(LOCALAPPDATA, "spicetify", "CustomApps", "marketplace")
-        if os.path.exists(custom_apps_dir) and os.path.isdir(custom_apps_dir):
-            return True
-
         return False
 
     @staticmethod
@@ -146,7 +288,6 @@ class SystemDetector:
                 except Exception:
                     pass
 
-        # If modern xpui folder exists but index lacks spicetify, it is definitely unpatched
         if found_xpui:
             return False
 
@@ -173,6 +314,14 @@ class SystemDetector:
             return False
 
     @classmethod
+    def get_cached_update_status(cls, force: bool = False) -> Dict[str, Any]:
+        now = time.time()
+        if force or cls._cached_update_info is None or (now - cls._last_update_check > 300):
+            cls._cached_update_info = AutoUpdater.check_for_updates()
+            cls._last_update_check = now
+        return cls._cached_update_info
+
+    @classmethod
     def get_full_status(cls) -> Dict[str, Any]:
         spotify_path = cls.get_spotify_path()
         spicetify_path = cls.get_spicetify_path()
@@ -193,6 +342,7 @@ class SystemDetector:
                 "marketplace_installed": cls.is_marketplace_installed(),
                 "applied": cls.is_spicetify_applied(),
             },
+            "app_update": cls.get_cached_update_status(),
             "system": {
                 "startup_enabled": cls.is_startup_enabled(),
                 "timestamp": time.time(),
@@ -238,11 +388,7 @@ class SpotifyManager:
             process.stdout.close()
             process.wait()
 
-            if process.returncode == 0:
-                return True
-            else:
-                self._log(f"Process ended with code {process.returncode}", "warning")
-                return False
+            return process.returncode == 0
         except Exception as e:
             self._log(f"Execution failed: {e}", "error")
             return False
@@ -272,8 +418,8 @@ class SpotifyManager:
             self._log(f"Installer downloaded to {installer_path}", "success")
 
             self._log("Running Spotify installer (please wait a moment)...", "info")
-            proc = subprocess.Popen([installer_path], creationflags=0)
-            
+            subprocess.Popen([installer_path], creationflags=0)
+
             # Wait for Spotify to be installed
             max_wait = 90
             start_t = time.time()
@@ -299,7 +445,7 @@ class SpotifyManager:
         """Installs Spicetify CLI via the official script."""
         self._log("Starting Spicetify CLI installation...", "info")
         success = self.run_powershell_cmd(SPICETIFY_INSTALL_CMD)
-        
+
         spicetify_path = SystemDetector.get_spicetify_path()
         if spicetify_path or success:
             self._log("Spicetify CLI installation completed successfully!", "success")
@@ -312,7 +458,7 @@ class SpotifyManager:
         """Installs Spicetify Marketplace extension."""
         self._log("Installing Spicetify Marketplace...", "info")
         success = self.run_powershell_cmd(MARKETPLACE_INSTALL_CMD)
-        
+
         spicetify_path = SystemDetector.get_spicetify_path()
         if spicetify_path:
             subprocess.run([spicetify_path, "config", "custom_apps", "marketplace"], capture_output=True)
@@ -330,6 +476,26 @@ class SpotifyManager:
         cmd = f"& '{spicetify_path}' update"
         return self.run_powershell_cmd(cmd)
 
+    def ensure_valid_spicetify_config(self) -> None:
+        """Ensures Spicetify config does not use a broken or empty theme like 'marketplace' as current_theme."""
+        spicetify_path = SystemDetector.get_spicetify_path()
+        if not spicetify_path:
+            return
+        try:
+            # Check current theme
+            res = subprocess.run([spicetify_path, "config", "current_theme"], capture_output=True, text=True, timeout=5)
+            curr = res.stdout.strip()
+            if curr.lower() == "marketplace" or not curr:
+                self._log("Fixing current_theme to SpicetifyDefault (marketplace is a custom app, not a theme)...", "info")
+                subprocess.run([spicetify_path, "config", "current_theme", "SpicetifyDefault"], capture_output=True, timeout=5)
+
+            # Ensure marketplace is in custom_apps
+            res2 = subprocess.run([spicetify_path, "config", "custom_apps"], capture_output=True, text=True, timeout=5)
+            if "marketplace" not in res2.stdout:
+                subprocess.run([spicetify_path, "config", "custom_apps", "marketplace"], capture_output=True, timeout=5)
+        except Exception as e:
+            self._log(f"Notice: Config check warning ({e})", "warning")
+
     def apply_spicetify(self, force_backup: bool = True) -> bool:
         """Applies Spicetify modifications/patches with auto-update and multi-tier recovery."""
         spicetify_path = SystemDetector.get_spicetify_path()
@@ -338,8 +504,10 @@ class SpotifyManager:
             return False
 
         self.kill_spotify()
+        self.ensure_valid_spicetify_config()
 
-        # Step 1: Ensure Spicetify is up to date
+        # Step 1: Attempt spicetify update (non-blocking if rate limited)
+        self._log("Checking Spicetify CLI updates...", "info")
         self.run_powershell_cmd(f"& '{spicetify_path}' update")
 
         # Step 2: Try standard apply or backup apply
@@ -350,7 +518,7 @@ class SpotifyManager:
         # Step 3: Fallback 1 - restore, then backup apply
         if not success or not SystemDetector.is_spicetify_applied():
             self._log("Attempting 'spicetify restore backup apply' recovery...", "warning")
-            fallback_cmd = f"& '{spicetify_path}' restore backup apply"
+            fallback_cmd = f"& '{spicetify_path}' restore; & '{spicetify_path}' backup apply"
             success = self.run_powershell_cmd(fallback_cmd)
 
         # Step 4: Fallback 2 - clear stale backup and create fresh backup apply
@@ -421,7 +589,7 @@ class SpotifyManager:
         return True
 
     def launch_spotify(self) -> bool:
-        """Launches Spotify application."""
+        """Launches Spotify application decoupled as an interactive Windows user process."""
         spotify_path = SystemDetector.get_spotify_path()
         if not spotify_path:
             self._log("Spotify executable not found! Cannot launch.", "error")
@@ -429,12 +597,18 @@ class SpotifyManager:
 
         self._log(f"Launching Spotify from {spotify_path}...", "info")
         try:
-            subprocess.Popen([spotify_path], close_fds=True)
+            # Shell.Application starts process decoupled in user's interactive desktop
+            cmd = f"$app = New-Object -ComObject Shell.Application; $app.ShellExecute('{spotify_path}', '', '', 'open', 1)"
+            subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, timeout=10)
             self._log("Spotify launched!", "success")
             return True
         except Exception as e:
             self._log(f"Failed to launch Spotify: {e}", "error")
             return False
+
+    def update_spotisync(self) -> bool:
+        """Performs full automated GitHub self-update of SpotiSync."""
+        return AutoUpdater.download_and_apply_update(log_callback=self.log_callback)
 
     def set_startup_enabled(self, enabled: bool) -> bool:
         """Configures Windows Startup Registry entry to run silently and exit (0 RAM)."""
@@ -467,7 +641,7 @@ class SpotifyManager:
         5. Launches Spotify
         """
         self._log("=== Starting Automated Spotify & Spicetify Full Setup ===", "info")
-        
+
         # Step 1: Spotify
         if not SystemDetector.is_spotify_installed():
             self._log("[Step 1/4] Spotify is not installed. Initiating download...", "info")

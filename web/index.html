@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify & Spicetify Auto-Setup Suite</title>
+    <title>SpotiSync - Spotify & Spicetify Auto-Setup Suite</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -90,6 +90,30 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- SpotiSync Auto-Updater Card -->
+                <div class="card status-card" id="card-updater">
+                    <div class="card-header">
+                        <div class="card-icon update-color">
+                            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                        </div>
+                        <div class="card-title-group">
+                            <h3>SpotiSync Auto-Updater</h3>
+                            <span class="card-sub" id="app-version-text">v1.1.0 • GitHub Main</span>
+                        </div>
+                        <span class="pill pill-ready" id="app-update-pill">Up to Date</span>
+                    </div>
+                    <div class="card-details">
+                        <div class="detail-row">
+                            <span class="label">Commit Version:</span>
+                            <span class="value" id="app-commit-text">Synced</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="label">Auto-Update Status:</span>
+                            <span class="value" id="app-update-status-text">Active (Checks on boot)</span>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- Hero Action Area -->
@@ -143,6 +167,14 @@
                         </div>
                     </button>
 
+                    <button class="action-btn" id="btn-update-app">
+                        <div class="action-icon">⚡</div>
+                        <div class="action-text">
+                            <strong>Update SpotiSync</strong>
+                            <span>Sync latest build from GitHub</span>
+                        </div>
+                    </button>
+
                     <button class="action-btn" id="btn-kill-spotify">
                         <div class="action-icon">🛑</div>
                         <div class="action-text">
@@ -158,7 +190,7 @@
                 <div class="setting-item">
                     <div class="setting-info">
                         <strong>Auto-Detect on Windows Startup</strong>
-                        <span>Automatically check and launch on computer boot</span>
+                        <span>Automatically check, update, and launch on computer boot</span>
                     </div>
                     <label class="switch">
                         <input type="checkbox" id="startup-toggle">
@@ -196,7 +228,7 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <span>SpotiSync v1.0.0 • Powered by Spicetify CLI</span>
+            <span>SpotiSync v1.1.0 • Auto-Update Enabled • Created by Junaid355</span>
             <span id="footer-time">Ready</span>
         </footer>
     </div>

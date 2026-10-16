@@ -8,7 +8,7 @@ import json
 import threading
 import argparse
 import webview
-from core import SystemDetector, SpotifyManager
+from core import SystemDetector, SpotifyManager, AutoUpdater
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 web_dir = os.path.join(current_dir, "web")
@@ -27,7 +27,7 @@ def emit_log(message: str, level: str = "info"):
         safe_lvl = json.dumps(str(level))
         try:
             _window.evaluate_js(f"if (window.receiveBackendLog) window.receiveBackendLog({safe_msg}, {safe_lvl});")
-        except Exception as e:
+        except Exception:
             pass
 
 
@@ -48,6 +48,40 @@ class JsApi:
 
     def get_status(self):
         return SystemDetector.get_full_status()
+
+    def check_app_update(self):
+        def worker():
+            emit_log("Checking for SpotiSync updates from GitHub...", "info")
+            info = SystemDetector.get_cached_update_status(force=True)
+            if info.get("available"):
+                emit_log(f"Update available! Latest commit: {info.get('latest_commit')} - {info.get('message')}", "warning")
+            else:
+                emit_log("SpotiSync is up to date with GitHub main branch.", "success")
+            emit_status()
+            if _window:
+                _window.evaluate_js("if (window.onActionCompleted) window.onActionCompleted();")
+
+        threading.Thread(target=worker, daemon=True).start()
+        return "started"
+
+    def update_app(self):
+        def worker():
+            try:
+                emit_log("Starting SpotiSync auto-update...", "info")
+                success = _manager.update_spotisync()
+                if success:
+                    emit_log("SpotiSync files updated! Please restart the dashboard to load newest code.", "success")
+                else:
+                    emit_log("SpotiSync update completed with warnings or no changes.", "warning")
+            except Exception as e:
+                emit_log(f"Update error: {e}", "error")
+            finally:
+                emit_status()
+                if _window:
+                    _window.evaluate_js("if (window.onActionCompleted) window.onActionCompleted();")
+
+        threading.Thread(target=worker, daemon=True).start()
+        return "started"
 
     def auto_setup_all(self):
         def worker():
@@ -142,7 +176,13 @@ def run_auto_startup_mode():
     """Silent background check executed when PC boots or triggered via --auto."""
     print("Executing Spotify Auto-Check on Startup...")
     mgr = SpotifyManager()
-    
+
+    # 0. Check for self-updates quietly
+    try:
+        AutoUpdater.download_and_apply_update()
+    except Exception:
+        pass
+
     # 1. Check if Spotify is installed
     if not SystemDetector.is_spotify_installed():
         print("Spotify is missing. Initiating auto-setup pipeline...")
@@ -175,6 +215,7 @@ def main():
     parser = argparse.ArgumentParser(description="Spotify & Spicetify Auto-Setup Suite")
     parser.add_argument("--auto", action="store_true", help="Run in silent auto-check startup mode")
     parser.add_argument("--check", action="store_true", help="Print system status and exit")
+    parser.add_argument("--update", action="store_true", help="Auto-update SpotiSync files from GitHub and exit")
     args = parser.parse_args()
 
     if args.auto:
@@ -185,16 +226,20 @@ def main():
         print(json.dumps(SystemDetector.get_full_status(), indent=2))
         return
 
+    if args.update:
+        AutoUpdater.download_and_apply_update()
+        return
+
     _manager = SpotifyManager(log_callback=emit_log)
     api = JsApi()
-    
+
     _window = webview.create_window(
         title="SpotiSync - Spotify & Spicetify Auto-Setup Suite",
         url=f"file:///{index_html.replace(os.sep, '/')}",
         js_api=api,
-        width=1020,
-        height=720,
-        min_size=(900, 620),
+        width=1040,
+        height=740,
+        min_size=(920, 640),
         text_select=True,
     )
     webview.start(debug=False)

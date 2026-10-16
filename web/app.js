@@ -21,6 +21,11 @@ const spicetifyStatusPill = document.getElementById('spicetify-status-pill');
 const marketplaceStatusText = document.getElementById('marketplace-status-text');
 const patchStatusText = document.getElementById('patch-status-text');
 
+const appVersionText = document.getElementById('app-version-text');
+const appUpdatePill = document.getElementById('app-update-pill');
+const appCommitText = document.getElementById('app-commit-text');
+const appUpdateStatusText = document.getElementById('app-update-status-text');
+
 const startupToggle = document.getElementById('startup-toggle');
 const blockUpdatesToggle = document.getElementById('block-updates-toggle');
 const btnAutoSetup = document.getElementById('btn-auto-setup');
@@ -28,6 +33,7 @@ const btnLaunchSpotify = document.getElementById('btn-launch-spotify');
 const btnApplySpicetify = document.getElementById('btn-apply-spicetify');
 const btnInstallMarketplace = document.getElementById('btn-install-marketplace');
 const btnUpdateSpicetify = document.getElementById('btn-update-spicetify');
+const btnUpdateApp = document.getElementById('btn-update-app');
 const btnKillSpotify = document.getElementById('btn-kill-spotify');
 
 const logTerminal = document.getElementById('log-terminal');
@@ -65,6 +71,7 @@ function renderStatus(status) {
 
     const spotify = status.spotify || {};
     const spicetify = status.spicetify || {};
+    const appUpdate = status.app_update || {};
     const system = status.system || {};
 
     // Spotify Card
@@ -106,7 +113,34 @@ function renderStatus(status) {
     marketplaceStatusText.textContent = spicetify.marketplace_installed ? '✅ Active / Ready' : '❌ Not Installed';
     patchStatusText.textContent = spicetify.applied ? '✅ Patches Applied' : '⚠️ Pending / Unpatched';
 
-    // System Badge
+    // SpotiSync Auto-Updater Card
+    if (appVersionText) {
+        const ver = appUpdate.local_version || '1.1.0';
+        appVersionText.textContent = `v${ver} • GitHub Main`;
+    }
+    if (appCommitText) {
+        const c = appUpdate.local_commit || 'synced';
+        appCommitText.textContent = `#${c}`;
+    }
+    if (appUpdatePill) {
+        if (appUpdate.available) {
+            appUpdatePill.className = 'pill pill-missing';
+            appUpdatePill.textContent = 'Update Ready';
+            if (appUpdateStatusText) {
+                appUpdateStatusText.textContent = `Update available: #${appUpdate.latest_commit}`;
+                appUpdateStatusText.style.color = '#f1c40f';
+            }
+        } else {
+            appUpdatePill.className = 'pill pill-ready';
+            appUpdatePill.textContent = 'Up to Date';
+            if (appUpdateStatusText) {
+                appUpdateStatusText.textContent = 'Synchronized with GitHub';
+                appUpdateStatusText.style.color = '#1ed760';
+            }
+        }
+    }
+
+    // System Overall Badge
     if (spotify.installed && spicetify.installed && spicetify.marketplace_installed && spicetify.applied) {
         badgeElement.className = 'badge badge-success';
         badgeText.textContent = 'All Systems Ready';
@@ -139,7 +173,7 @@ function waitForApi() {
             if (window.pywebview && window.pywebview.api) {
                 clearInterval(interval);
                 resolve(window.pywebview.api);
-            } else if (attempts > 50) { // 5 seconds max
+            } else if (attempts > 50) {
                 clearInterval(interval);
                 resolve(null);
             }
@@ -229,6 +263,15 @@ if (btnUpdateSpicetify) {
         setBusyState(true);
         appendLog('Checking and updating Spicetify CLI...', 'info');
         await callApi('update_spicetify');
+    });
+}
+
+if (btnUpdateApp) {
+    btnUpdateApp.addEventListener('click', async () => {
+        if (isBusy) return;
+        setBusyState(true);
+        appendLog('Checking GitHub repository and updating SpotiSync Suite...', 'info');
+        await callApi('update_app');
     });
 }
 

@@ -178,7 +178,7 @@ body {
 /* Status Cards Grid */
 .status-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 16px;
 }
 
@@ -219,6 +219,11 @@ body {
 .spicetify-color {
     background: rgba(187, 134, 252, 0.15);
     color: var(--accent-purple);
+}
+
+.update-color {
+    background: rgba(46, 204, 113, 0.15);
+    color: #2ecc71;
 }
 
 .card-title-group {
@@ -367,7 +372,7 @@ body {
 
 .actions-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 12px;
 }
 
